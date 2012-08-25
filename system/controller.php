@@ -514,7 +514,7 @@ class the
 
 
 		// todo:add check $res if there are no matches
-		$res = preg_match_all('/<!-- ((print|render)\.(([a-z,_,-,0-9]*)\.(.*?))) -->/', $this->output, $methodstarts);
+		$res = preg_match_all('/<!-- ((print|render)\.(([a-z,_,-,0-9]*)\.(.*?))) (\/?)-->/', $this->output, $methodstarts);
 		// we need to load these models
 		$this->models = array_unique($methodstarts[4]);
 
@@ -603,17 +603,38 @@ class the
 		foreach ($this->models_methods_print as $action) {
 			$model = $action[0];
 			$method = $action[1];
+			$isalt = false;
 			$start = "<!-- print.$model.$method -->";
 			$end = "<!-- /print.$model.$method -->";
+			$alt = "<!-- print.$model.$method /-->";
 			$pos1 = strpos($this->output, $start);
-			$pos2 = strpos($this->output, $end) - $pos1 + strlen($end);
+			if($pos1 === false)
+			{
+				$start = $alt;
+				$end = $alt;
+				$pos1 = strpos($this->output, $alt);
+				$pos2 = strlen($alt);
+				$isalt = true;
+			}
+			else
+			{
+				$pos2 = strpos($this->output, $end) - $pos1 + strlen($end);
+			}
+
 			self::$model = $model;
 
 			if($pos1 === false) continue;
 
-			$this->current_block = substr($this->output, $pos1+strlen($start), $pos2 - 2*strlen($end));
-			$render_template = substr($this->output, $pos1+strlen($start), $pos2 - 2*strlen($end) + 1);
-
+			if(!$isalt)
+			{
+				$this->current_block = substr($this->output, $pos1+strlen($start), $pos2 - 2*strlen($end));
+				$render_template = substr($this->output, $pos1+strlen($start), $pos2 - 2*strlen($end) + 1);
+			}
+			else
+			{
+				$this->current_block = '';
+				$render_template = '';
+			}
 			$test = explode("(", $method);
 
 			if($model == 'session')
@@ -679,13 +700,16 @@ class the
 		// remove res comments in files
 		$this->output = preg_replace('/<!-- (\/?)res\.([a-z,_,-]*) -->/', "", $this->output);
 
-		$res = preg_match_all('/<!-- dry\.([a-z,_,-,\/]*)\.([a-z,_,-]*) -->/', $this->output, $datastarts);
-
+		$res = preg_match_all('/<!-- dry\.([a-z,_,-,\/]*)\.([a-z,_,-]*) (\/?)-->/', $this->output, $datastarts);
+		
 		$loaded_files = array();
 		arsort($datastarts);
 		foreach ($datastarts[0] as $key => $value) {					
 			$start = $value;
-			$end = str_replace("<!-- ", "<!-- /", $value);
+			if($datastarts[3][$key] == '/')
+				$end = $value;
+			else
+				$end = str_replace("<!-- ", "<!-- /", $value);
 			$pos1 = strpos($this->output, $start);
 			$pos2 = strpos($this->output, $end) - $pos1 + strlen($end);
 
@@ -763,7 +787,7 @@ class the
 
 			// we need to march data points into this entry
 			$render_template = substr($this->output, $pos1+strlen($start), $pos2 - 2*strlen($end)+1);
-			$res = preg_match_all('/<!-- print\.([@,a-z,A-Z,_,-,\.]*) -->/', $render_template, $datastarts);
+			$res = preg_match_all('/<!-- print\.([@\+,a-z,A-Z,_,-,\.]*) -->/', $render_template, $datastarts);
 			$rendered_data = "";
 
 			if($data_arr === false)
@@ -806,7 +830,16 @@ class the
 			            if(strpos($datastarts[1][$key], '@') !== false)
 			            {
 			               $is_attr = true;
+			               $is_append = false;
 			               $pointers = explode('.', str_replace('@','',$datastarts[1][$key]));
+			               $datakey = $pointers[1];
+			               $dataattr = $pointers[0];
+			            }
+			            elseif(strpos($datastarts[1][$key], '+') !== false)
+			            {
+			               $is_attr = true;
+			               $is_append = true;
+			               $pointers = explode('.', str_replace('+','',$datastarts[1][$key]));
 			               $datakey = $pointers[1];
 			               $dataattr = $pointers[0];
 			            }
@@ -826,9 +859,12 @@ class the
 			                if($is_attr)
 			                {
 				                if($data[$datakey] === false)
-						$attrchange = preg_replace("% ".$dataattr."(.*?)=(.*?)('|\")(.*?)('|\")%", ' ', $current_item);			                	
+									$attrchange = preg_replace("% ".$dataattr."(.*?)=(.*?)('|\")(.*?)('|\")%", ' ', $current_item);			                	
 				                else {
-				                	$attrchange = preg_replace("% ".$dataattr."(.*?)=(.*?)('|\")(.*?)('|\")%", " ".$dataattr.'="'.$data[$datakey].'"', $current_item);
+				                	if($is_append)
+					                	$attrchange = preg_replace("% ".$dataattr."(.*?)=(.*?)('|\")(.*?)('|\")%", " ".$dataattr.'="$4 '.$data[$datakey].'"', $current_item);
+				                	else
+					                	$attrchange = preg_replace("% ".$dataattr."(.*?)=(.*?)('|\")(.*?)('|\")%", " ".$dataattr.'="'.$data[$datakey].'"', $current_item);
 				                }
 
 				                $rendered_tpl = substr_replace($rendered_tpl, $attrchange, $rpos1, $rpos2);
