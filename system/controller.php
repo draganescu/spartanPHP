@@ -54,6 +54,9 @@ class the
 	var $default = "index";
 	// associations between uri segments and template files
 	var $uri_templates = array(); 
+	// set at runtime what template to run
+	var $forced_templates = false;
+	var $forced_template = '';
 	// the models detected in the template
 	var $models = array();
 	// the blocks that can be accessed from some other template
@@ -434,8 +437,6 @@ class the
 				{
 					if(!$this->model($model))
 						echo '<!-- missing_model_'.$model.' -->';
-					$object = $this->objects[$model];
-					return $object->$method($event);
 				}
 			}
 
@@ -760,7 +761,6 @@ class the
 
 			$this->dispatch('executed_'.$model."_".$method);
 
-
 			// we need to march data points into this entry
 			$render_template = substr($this->output, $pos1+strlen($start), $pos2 - 2*strlen($end)+1);
 			$res = preg_match_all('/<!-- print\.([@,a-z,A-Z,_,-,\.]*) -->/', $render_template, $datastarts);
@@ -849,7 +849,7 @@ class the
 			else
 				$this->output = substr_replace($this->output, "", $pos1, $pos2);
 		}
-		$this->output = preg_replace("/(href|action)=(\"|')(.*?)\?".$this->tpl_uri."=(.*?)(\"|')/", '$1="'.$this->link_uri.'$4"', $this->output);
+		$this->output = preg_replace("/(href|action)=(\"|')([a-zA-Z0-9\-\._\?\,\'\/\\\+&amp;%\$#\=~]*)\?".$this->tpl_uri."=(.*?)(\"|')/", '$1="'.$this->link_uri.'$4"', $this->output);
 		$this->output = str_replace($this->link_uri."__", $this->link_uri.$this->pad_uri, $this->output);
 		$this->dispatch('after_render');
 
@@ -994,18 +994,21 @@ class the
 			$this->_install();
 
 		$this->dispatch('after_install');
-
 		foreach ($this->uri_templates as $key=>$assoc)
 		{
 			if($this->template_data != "")
 				continue;
 			
 			if($this->forced_templates === true)
+			{
 				if($key == $this->forced_template)
 					$this->_parse($assoc);
+			}
 			else
+			{
 				if(preg_match("%".$key."%", $this->uri_string))
 					$this->_parse($assoc);
+			}
 		}
 
 		if($this->template_data == "" && count($this->uri_segments) > 0)
@@ -1054,7 +1057,7 @@ class the
 		if(array_key_exists($model, $this->objects))
 			return false;
 
-		if($this->dispatch('load_model') === true) return true;
+		if($this->dispatch('load_model') === 'deferred') return true;
 
 		if($model == 'session') return true;
 		if($model == 'if') return true;
