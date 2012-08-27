@@ -740,6 +740,111 @@ class the
 		$this->dispatch('after_drying');
 	}
 
+	// print replaces a block of html with the result of the method
+	function _loop($html, $data, $name)
+	{
+		$this->current_action = 'loop';
+		$this->dispatch('before_loop');
+
+		$lstart = $name;
+		$lend = str_replace("<!-- ", "<!-- /", $name);
+		$lpos1 = strpos($html, $lstart) + strlen($lstart);
+		$lpos2 = strpos($html, $lend) - $lpos1;
+		$loop = substr($html, $lpos1, $lpos2);
+
+		$res = preg_match_all('/<!-- print\.([@\+,a-z,A-Z,_,-,\.]*) (\/?)-->/', $html, $datastarts);
+
+		$datastarts = super_unique($datastarts);
+
+		$return = '';
+		foreach($data as $item)
+		{
+
+			foreach ($datastarts[0] as $key => $value) {					
+
+				$start = $value;
+				if($datastarts[3][$key] == '/')
+					$end = $value;
+				else
+					$end = str_replace("<!-- ", "<!-- /", $value);
+				$pos1 = strpos($loop, $start);
+				$pos2 = strpos($loop, $end) - $pos1 + strlen($end);
+
+				$this->dispatch('loop');
+				/*
+				$is_attr = false;
+				if(strpos($datastarts[1][$key], '@') !== false)
+				{
+					$is_attr = true;
+					$is_append = false;
+					$pointers = explode('.', str_replace('@','',$datastarts[1][$key]));
+					$datakey = $pointers[1];
+					$dataattr = $pointers[0];
+				}
+				elseif(strpos($datastarts[1][$key], '+') !== false)
+				{
+					$is_attr = true;
+					$is_append = true;
+					$pointers = explode('.', str_replace('+','',$datastarts[1][$key]));
+					$datakey = $pointers[1];
+					$dataattr = $pointers[0];
+				}
+				else
+					$datakey = $datastarts[1][$key];
+				*/
+				if(!array_key_exists($datastarts[1][$key], $item)) continue;
+
+			$current_item = substr($loop, $pos1 + strlen($start), $pos2 - 2*strlen($end) + 1);
+			$content = $item[$datastarts[1][$key]];
+
+/*            
+			  if(!$is_attr && $content === false)
+              	$return .= substr_replace($loop, $current_item, $pos1, $pos2);
+              else
+              {
+              	if($is_attr)
+                {
+	                if($data[$datakey] === false)
+						$attrchange = preg_replace("% ".$dataattr."(.*?)=(.*?)('|\")(.*?)('|\")%", ' ', $current_item);			                	
+	                else {
+	                	if($is_append)
+		                	$attrchange = preg_replace("% ".$dataattr."(.*?)=(.*?)('|\")(.*?)('|\")%", " ".$dataattr.'="$4 '.$content.'"', $current_item);
+	                	else
+		                	$attrchange = preg_replace("% ".$dataattr."(.*?)=(.*?)('|\")(.*?)('|\")%", " ".$dataattr.'="'.$content.'"', $current_item);
+	                }
+
+	                $return .= substr_replace($loop, $attrchange, $pos1, $pos2);
+	                $noocc = true;
+	            }
+              	else
+              	{
+	              	$return .= substr_replace($loop, $content, $pos1, $pos2);
+	            }
+	            
+
+              }
+*/
+			$return .= substr_replace($loop, $content, $pos1, $pos2);
+
+				$occurences = substr_count($return, $value);
+				if($occurences > 0)
+				{
+					for ($i=0; $i < $occurences; $i++) { 
+						$start = $value;
+						$end = str_replace("<!-- ", "<!-- /", $value);
+						$rpos1 = strpos($return, $start);
+						$rpos2 = strpos($return, $end) - $rpos1 + strlen($end);
+						$return = substr_replace($return, $content, $rpos1, $rpos2);
+					}
+				}
+			}
+		}
+
+		$this->dispatch('after_looping');
+
+		return $return;
+	}
+
 
 	// render checks for a returned array, if found loops trough and, if not, replaces data with array keys
 	function _render()
@@ -787,7 +892,7 @@ class the
 
 			// we need to march data points into this entry
 			$render_template = substr($this->output, $pos1+strlen($start), $pos2 - 2*strlen($end)+1);
-			$res = preg_match_all('/<!-- print\.([@\+,a-z,A-Z,_,-,\.]*) -->/', $render_template, $datastarts);
+			$res = preg_match_all('/<!-- print\.([@\+,a-z,A-Z,_,-,\.]*) (\/?)-->/', $render_template, $datastarts);
 			$rendered_data = "";
 
 			if($data_arr === false)
@@ -822,7 +927,14 @@ class the
 					$start = $value;
 					$end = str_replace("<!-- ", "<!-- /", $value);
 					$rpos1 = strpos($rendered_tpl, $start);
-					$rpos2 = strpos($rendered_tpl, $end) - $rpos1 + strlen($end);
+					if($rpos1 === false)
+					{
+						$end = $start;
+						$rpos1 = strpos($rendered_tpl, $start);
+						$rpos2 = $rpos1 + strlen($start);
+					}
+					else
+						$rpos2 = strpos($rendered_tpl, $end) - $rpos1 + strlen($end);
 
 					
 
@@ -848,8 +960,29 @@ class the
 			            
 			            $current_item = substr($rendered_tpl, $rpos1 + strlen($start), $rpos2 - 2*strlen($end)+1);
 
-			            if(!array_key_exists($datakey, $data))
-			              $rendered_tpl = substr_replace($rendered_tpl, "missing_".$datakey, $rpos1, $rpos2);
+			            if(is_array($data[$datakey]))
+			            {
+			            	$loop = $this->_loop($render_template, $data[$datakey], $datastarts[0][$key]);
+			            	$rendered_tpl = substr_replace($rendered_tpl, $loop, $rpos1, $rpos2);
+			            	$occurences = substr_count($rendered_tpl, $datastarts[0][$key]);
+							if($occurences > 0)
+							{
+								for ($i=0; $i < $occurences; $i++) { 
+									$value = $datastarts[0][$key];
+									$start = $value;
+									$end = str_replace("<!-- ", "<!-- /", $value);
+									$rpos1 = strpos($rendered_tpl, $start);
+									$rpos2 = strpos($rendered_tpl, $end) - $rpos1 + strlen($end);
+
+									$loop = $this->_loop($rendered_tpl, $data[$datakey], $datastarts[0][$key]);
+					            	$rendered_tpl = substr_replace($rendered_tpl, $loop, $rpos1, $rpos2);
+								}
+							}
+			            	continue;
+			            }
+
+			            if(!array_key_exists($datakey, $data)) continue;
+			              // $rendered_tpl = substr_replace($rendered_tpl, "missing_".$datakey, $rpos1, $rpos2);
 			            else
 			            {
 			              if(!$is_attr && $data[$datakey] === false)
@@ -871,7 +1004,21 @@ class the
 
 			                }
 			                else
-			                  $rendered_tpl = substr_replace($rendered_tpl, $data[$datakey], $rpos1, $rpos2);
+			                {
+			                	$rendered_tpl = substr_replace($rendered_tpl, $data[$datakey], $rpos1, $rpos2);
+			                	$occurences = substr_count($render_tpl, $datastarts[0][$key]);
+								if($occurences > 0)
+								{
+									for ($i=0; $i < $occurences; $i++) { 
+										$value = $datastarts[0][$key];
+										$start = $value;
+										$end = str_replace("<!-- ", "<!-- /", $value);
+										$rpos1 = strpos($rendered_tpl, $start);
+										$rpos2 = strpos($rendered_tpl, $end) - $rpos1 + strlen($end);
+										$rendered_tpl = substr_replace($rendered_tpl, $data[$datakey], $rpos1, $rpos2);
+									}
+								}
+			              	}
 			              }
 			            }
 				}
@@ -1292,6 +1439,22 @@ function spa($what)
 {
 	print_r($what); exit;
 }
+
+function super_unique($array)
+{
+  $result = array_map("unserialize", array_unique(array_map("serialize", $array)));
+
+  foreach ($result as $key => $value)
+  {
+    if ( is_array($value) )
+    {
+      $result[$key] = super_unique($value);
+    }
+  }
+
+  return $result;
+}
+
 // END app class
 
 /* End of file controller.php */
