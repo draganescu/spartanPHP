@@ -6,11 +6,15 @@ Spartan is a helper for more lean web development.
 --------------------------------------------------
 
 The working principle is really simple:
-	1 all the frontend is made of html pages
-	2 all the backend is made of php objects
-	3 the html pages have some html comments that pull dynamic data from the php objects
+
+
+1. all the frontend is made of html pages
+2. all the backend is made of php objects
+3. the html pages have some html comments that pull dynamic data from the php objects
+
 
 For example say you want to display a cooking recipe in a page. Its really easy:
+
 
 ```html
 <html>
