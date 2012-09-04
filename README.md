@@ -12,6 +12,7 @@ The working principle is really simple:
 
 For example say you want to display a cooking recipe in a page. Its really easy:
 
+```html
 <html>
 <body>
 	<!-- render.recipes.the_recipe -->
@@ -51,9 +52,11 @@ For example say you want to display a cooking recipe in a page. Its really easy:
 
 </body>
 </html>
+```
 
 on the server side you'd have a simple php class that looks in the db and gets the recipe. You need to return an array of data:
 
+```PHP
 <?php 
 	class recipes
 	{
@@ -85,6 +88,7 @@ on the server side you'd have a simple php class that looks in the db and gets t
 	}
 	
 ?>
+```
 
 Aside from this MVC pull structure Spartan offers some other features to help you implement web applications in an easy manner:
 
