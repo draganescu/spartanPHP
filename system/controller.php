@@ -52,6 +52,10 @@ class the
 	var $theme = "default";
 	// the default template to load when no rule is set in the index file
 	var $default = "index";
+	// no segments means that PHP doesnt support url segments
+	var $no_segments = false;
+	// forces base to stay in the theme root even for files in subfolders
+	var $always_root_templates = false;
 	// associations between uri segments and template files
 	var $uri_templates = array(); 
 	// set at runtime what template to run
@@ -166,22 +170,34 @@ class the
 		preg_match("|([a-z,A-Z,_,\.]*)\.php|", $_SERVER["SCRIPT_NAME"], $matches);
 		$index_file = $matches[0];
 		
-		
-		$this->uri_segments =
-			explode("/",str_replace($_SERVER['SCRIPT_NAME'],"", $_SERVER["REQUEST_URI"]));
+		if(!array_key_exists("QUERY_STRING", $_SERVER))
+			$this->query_segments = false; 
+
+		if($this->query_segments == true)
+			$this->uri_segments =
+				explode("/", $_SERVER["QUERY_STRING"]);
+		else
+			$this->uri_segments =
+				explode("/",str_replace($_SERVER['SCRIPT_NAME'],"", $_SERVER["REQUEST_URI"]));
 		$this->base_uri = $this->protocol.'://'.$_SERVER['HTTP_HOST'] . 
 						  str_replace($index_file,'',$_SERVER['SCRIPT_NAME']);
 		$this->uri_string = $this->base_uri.implode("/", $this->uri_segments);
+
+		$this->uri_segments[count($this->uri_segments)-1] = preg_replace('/&(.*?)$/', '', $this->uri_segments[count($this->uri_segments)-1]);
+
 
 		// we use this to construct correct links automagically
 		// and to respect rewrite
 		if ($this->rewrite === true)
 			$this->link_uri = $this->base_uri;
 		else if ($this->index_file != '')
-			$this->link_uri = $this->base_uri.$this->index_file."/";
+			if($this->query_segments == true)
+				$this->link_uri = $this->base_uri.$this->index_file."?/";
+			else
+				$this->link_uri = $this->base_uri.$this->index_file."/";
 		else
 			$this->link_uri = $this->base_uri;
-		
+
 		// removes the index file part from the segments array for easier access
 		if(array_key_exists(0, $this->uri_segments) && $this->index_file != '')
 			array_shift($this->uri_segments);
@@ -424,21 +440,25 @@ class the
 
 				if($model == NULL) 
 					if(function_exists($method))
-						return $method($event);
+						$data = $method($event);
 					else 
-						return true;
+						$data = true;
 
 				if(array_key_exists($model, $this->objects))
 				{ 
 					$object = $this->objects[$model];
-					return $object->$method($event);
+					$data = $object->$method($event);
 				}
 				else
 				{
+
 					if(!$this->model($model))
 						echo '<!-- missing_model_'.$model.' -->';
+					$object = $this->objects[$model];
+					$data = $object->$method($event);
 				}
 			}
+			return $data;
 
 		}
 		return true;	
@@ -517,7 +537,7 @@ class the
 		$res = preg_match_all('/<!-- ((print|render)\.(([a-z,_,-,0-9]*)\.(.*?))) (\/?)-->/', $this->output, $methodstarts);
 		// we need to load these models
 		$this->models = array_unique($methodstarts[4]);
-
+		
 		// categorize each method call
 		foreach ($methodstarts[2] as $k=>$v) {
 			if($v == 'render')
@@ -529,7 +549,7 @@ class the
 		/* i do this to have the deepest nested executed first */
 		$this->models_methods_render = array_reverse($this->models_methods_render);
 		$this->models_methods_print = array_reverse($this->models_methods_print);
-		(($tpl_path = explode("/", $file)) && (count($tpl_path) == 1)) ?
+		((($tpl_path = explode("/", $file)) && (count($tpl_path) == 1)) || $this->always_root_templates == true) ?
 			$tpl_folder = '' : $tpl_folder = array_pop($tpl_path) . '/';
 
 		if(stripos($this->output,'<base') === false)
@@ -646,6 +666,12 @@ class the
 				continue;
 			}
 
+			if($model == 'self')
+			{
+				$this->output = substr_replace($this->output, $this->$method, $pos1, $pos2);
+				continue;
+			}
+
 			// @TODO implement else
 			if($model == 'if')
 			{
@@ -743,6 +769,7 @@ class the
 	// print replaces a block of html with the result of the method
 	function _loop($html, $data, $name)
 	{
+
 		$this->current_action = 'loop';
 		$this->dispatch('before_loop');
 
@@ -750,20 +777,26 @@ class the
 		$lend = str_replace("<!-- ", "<!-- /", $name);
 		$lpos1 = strpos($html, $lstart) + strlen($lstart);
 		$lpos2 = strpos($html, $lend) - $lpos1;
-		$loop = substr($html, $lpos1, $lpos2);
+		$tloop = substr($html, $lpos1, $lpos2);
 
 		$res = preg_match_all('/<!-- print\.([@\+,a-z,A-Z,_,-,\.]*) (\/?)-->/', $html, $datastarts);
 
 		$datastarts = super_unique($datastarts);
-
 		$return = '';
 		foreach($data as $item)
 		{
-
+			$res = '';
 			foreach ($datastarts[0] as $key => $value) {					
 
+				if($res == '')
+					$loop = $tloop;
+				else
+					$loop = $res;
+
+				if(!array_key_exists($datastarts[1][$key], $item)) continue;
+
 				$start = $value;
-				if($datastarts[3][$key] == '/')
+				if($datastarts[2][$key] == '/')
 					$end = $value;
 				else
 					$end = str_replace("<!-- ", "<!-- /", $value);
@@ -771,80 +804,85 @@ class the
 				$pos2 = strpos($loop, $end) - $pos1 + strlen($end);
 
 				$this->dispatch('loop');
-				/*
-				$is_attr = false;
-				if(strpos($datastarts[1][$key], '@') !== false)
-				{
-					$is_attr = true;
-					$is_append = false;
-					$pointers = explode('.', str_replace('@','',$datastarts[1][$key]));
-					$datakey = $pointers[1];
-					$dataattr = $pointers[0];
-				}
-				elseif(strpos($datastarts[1][$key], '+') !== false)
-				{
-					$is_attr = true;
-					$is_append = true;
-					$pointers = explode('.', str_replace('+','',$datastarts[1][$key]));
-					$datakey = $pointers[1];
-					$dataattr = $pointers[0];
-				}
-				else
-					$datakey = $datastarts[1][$key];
-				*/
-				if(!array_key_exists($datastarts[1][$key], $item)) continue;
+				
+				$current_item = substr($loop, $pos1 + strlen($start), $pos2 - 2*strlen($end) + 1);
+				$content = $item[$datastarts[1][$key]];
 
-			$current_item = substr($loop, $pos1 + strlen($start), $pos2 - 2*strlen($end) + 1);
-			$content = $item[$datastarts[1][$key]];
-
-/*            
-			  if(!$is_attr && $content === false)
-              	$return .= substr_replace($loop, $current_item, $pos1, $pos2);
-              else
-              {
-              	if($is_attr)
-                {
-	                if($data[$datakey] === false)
-						$attrchange = preg_replace("% ".$dataattr."(.*?)=(.*?)('|\")(.*?)('|\")%", ' ', $current_item);			                	
-	                else {
-	                	if($is_append)
-		                	$attrchange = preg_replace("% ".$dataattr."(.*?)=(.*?)('|\")(.*?)('|\")%", " ".$dataattr.'="$4 '.$content.'"', $current_item);
-	                	else
-		                	$attrchange = preg_replace("% ".$dataattr."(.*?)=(.*?)('|\")(.*?)('|\")%", " ".$dataattr.'="'.$content.'"', $current_item);
-	                }
-
-	                $return .= substr_replace($loop, $attrchange, $pos1, $pos2);
-	                $noocc = true;
-	            }
-              	else
-              	{
-	              	$return .= substr_replace($loop, $content, $pos1, $pos2);
-	            }
-	            
-
-              }
-*/
-			$return .= substr_replace($loop, $content, $pos1, $pos2);
-
-				$occurences = substr_count($return, $value);
-				if($occurences > 0)
+				$res = substr_replace($loop, $content, $pos1, $pos2);				
+				$occurences = substr_count($res, $value);
+				
+				if($occurences > 1)
 				{
 					for ($i=0; $i < $occurences; $i++) { 
 						$start = $value;
 						$end = str_replace("<!-- ", "<!-- /", $value);
-						$rpos1 = strpos($return, $start);
-						$rpos2 = strpos($return, $end) - $rpos1 + strlen($end);
-						$return = substr_replace($return, $content, $rpos1, $rpos2);
+						$rpos1 = strpos($res, $start);
+						$rpos2 = strpos($res, $end) - $rpos1 + strlen($end);
+						$res = substr_replace($res, $content, $rpos1, $rpos2);
 					}
 				}
 			}
+			$return .= $res;
 		}
 
 		$this->dispatch('after_looping');
-
+		//echo $return;
+		//die;
 		return $return;
 	}
 
+
+	function parse($data, $bit)
+	{
+		$ret = '';
+		foreach($data as $item)
+		{
+			$html = $bit;
+			foreach ($item as $key => $value) {
+
+				// simple replacement
+				$start = "<!-- print.$key -->";
+				$end = "<!-- /print.$key -->";
+				
+				$occurences = substr_count($html, $start);// echo $start."|".$occurences;
+				for ($i=0; $i < $occurences; $i++) { 
+					$pos1 = strpos($html, $start);
+					$pos2 = strpos($html, $end) - $pos1 + strlen($end);
+					$html = substr_replace($html, $value, $pos1, $pos2);
+				}
+				
+				// attr substitution
+				$res = preg_match_all('/<!-- print\.([@\+,a-z,A-Z,_,\-,\.]*)\.'.$key.' -->/', $html, $datastarts);
+				foreach ($datastarts[0] as $key => $v) {
+					if(strpos($datastarts[1][$key], '@') !== false)
+		            {
+		               
+		               $is_append = false;
+		               $pointers = explode('.', str_replace('@','',$datastarts[1][$key]));
+		               $datakey = $pointers[1];
+		               $dataattr = $pointers[0];
+		            }
+		            elseif(strpos($datastarts[1][$key], '+') !== false)
+		            {
+		               $is_append = true;
+		               $pointers = explode('.', str_replace('+','',$datastarts[1][$key]));
+		               $datakey = $pointers[1];
+		               $dataattr = $pointers[0];
+		            }
+
+		            if($is_append)
+	                	$html = preg_replace("% ".$dataattr."(.*?)=(.*?)('|\")(.*?)('|\")%", " ".$dataattr.'="$4 '.$value.'"', $html);
+                	else
+	                	$html = preg_replace("% ".$dataattr."(.*?)=(.*?)('|\")(.*?)('|\")%", " ".$dataattr.'="'.$value.'"', $html);
+	                $html = str_replace($v, '', $html);
+	                $html = str_replace(str_replace('<!-- ', '<!-- /', $v), '', $html);
+				}
+			}
+			$ret .= $html;
+		}
+
+		return $ret;
+	}
 
 	// render checks for a returned array, if found loops trough and, if not, replaces data with array keys
 	function _render()
@@ -1047,7 +1085,7 @@ class the
 	}
 
 	function form_state($data = null)
-	{ 
+	{
 		// we should remove the old values because we dont need them
 		// this also removes the print statements we otherwise dont use
 		$this->current_block = preg_replace('/(<input(.*?)(text|hidden)(.*?))value="(.*?)"/',
@@ -1055,6 +1093,7 @@ class the
 											$this->current_block);
 		
 		if($data == null) $data = $_POST;
+		$hidden = '';
 		foreach($data as $key => $value)
 		{
 			if(is_array($value))
@@ -1113,7 +1152,6 @@ class the
 						$this->current_block);
 			}
 			$totals = array_sum(compact('textfields', 'textareas', 'selects', 'radios', 'checkboxes', 'hiddens'));
-			$hidden = '';
 			if($totals == 0)
 				$hidden .= '<input type="hidden" name="'.$key.'" value="'.$value.'" />' . "\n";
 
@@ -1238,12 +1276,13 @@ class the
 
 		$has_class = true; $has_model = true;
 		if(array_key_exists($model, $this->objects))
-			return false;
+			return true;
 
 		if($this->dispatch('load_model') === 'deferred') return true;
 
 		if($model == 'session') return true;
 		if($model == 'if') return true;
+		if($model == 'self') return true;
 
 		if(!file_exists(BASE.'../models/'.$model.'/class.php'))
 			$has_class = false;
